@@ -1,0 +1,7 @@
+yfinance<1.0
+pandas
+openai
+jinja2
+python-dotenv
+requests
+PyYAML
