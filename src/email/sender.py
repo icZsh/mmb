@@ -8,8 +8,11 @@ def send_email(html_content, recipient=None):
     """
     Sends the email using SMTP configuration from .env
     """
-    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_server = os.getenv("SMTP_SERVER") or "smtp.gmail.com"
+    try:
+        smtp_port = int(os.getenv("SMTP_PORT") or 587)
+    except ValueError:
+        smtp_port = 587
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
     
