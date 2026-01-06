@@ -19,8 +19,13 @@ def send_email(html_content, recipient=None):
     if not recipient:
         recipient = os.getenv("EMAIL_RECIPIENT")
         
-    if not smtp_user or not smtp_password or not recipient:
-        print("SMTP config missing. Skipping email send.")
+    missing_vars = []
+    if not smtp_user: missing_vars.append("SMTP_USER")
+    if not smtp_password: missing_vars.append("SMTP_PASSWORD")
+    if not recipient: missing_vars.append("EMAIL_RECIPIENT")
+
+    if missing_vars:
+        print(f"SMTP config missing: {', '.join(missing_vars)}. Skipping email send.")
         # Save to file instead for debugging
         with open("latest_briefing.html", "w") as f:
             f.write(html_content)
@@ -35,13 +40,19 @@ def send_email(html_content, recipient=None):
         
         msg.attach(MIMEText(html_content, 'html'))
         
+        if len(recipient) > 4:
+            masked_recipient = recipient[:2] + "***" + recipient[recipient.find("@"):]
+        else:
+            masked_recipient = "***"
+        print(f"Sending email to: {masked_recipient}")
+
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
         server.login(smtp_user, smtp_password)
         server.send_message(msg)
         server.quit()
         
-        print(f"Email sent successfully to {recipient}")
+        print(f"Email sent successfully to {masked_recipient}")
         return True
         
     except Exception as e:

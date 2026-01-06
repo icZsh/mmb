@@ -1,7 +1,12 @@
 import yaml
 import logging
+import sys
 from datetime import datetime
 import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Modules
 from src.data.market import get_market_snapshot
@@ -105,7 +110,8 @@ def main():
     if success:
         logger.info("Briefing completed successfully.")
     else:
-        logger.warning("Briefing completed but email failed (check local HTML).")
+        logger.error("Briefing completed but email failed (check local HTML).")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,9 @@
 import yfinance as yf
 import pandas as pd
+import json
+import os
+import time
+from datetime import datetime, timedelta
 
 def get_stock_data(tickers):
     """
@@ -13,12 +17,31 @@ def get_stock_data(tickers):
     
     # Batch fetch history for efficiency
     # Using period="2y" to ensure we have enough data for 200 SMA and other indicators
-    # grouped_by='ticker' ensures we get a MultiIndex if multiple tickers, but let's handle single vs multiple carefully
-    try:
-        data = yf.download(tickers, period="2y", group_by='ticker', auto_adjust=True, progress=False)
-    except Exception as e:
-        print(f"Error downloading batch data: {e}")
-        return {}
+    
+    HISTORY_CACHE = "market_history.pkl"
+    history_data = None
+    
+    # Check cache
+    if os.path.exists(HISTORY_CACHE):
+        try:
+            mod_time = datetime.fromtimestamp(os.path.getmtime(HISTORY_CACHE))
+            if datetime.now() - mod_time < timedelta(hours=4): # Cache for 4 hours
+                history_data = pd.read_pickle(HISTORY_CACHE)
+                print("Using cached market history.")
+        except Exception as e:
+            print(f"Failed to load history cache: {e}")
+
+    if history_data is None:
+        try:
+            history_data = yf.download(tickers, period="2y", group_by='ticker', auto_adjust=True, progress=False)
+            # Validate data was actually returned
+            if not history_data.empty:
+                history_data.to_pickle(HISTORY_CACHE)
+        except Exception as e:
+            print(f"Error downloading batch data: {e}")
+            return {}
+            
+    data = history_data
 
     results = {}
     
@@ -42,11 +65,43 @@ def get_stock_data(tickers):
                 print(f"Warning: No history found for {ticker_symbol}")
                 continue
             
-            # Fetch fundamentals (requires separate Ticker object calls usually, but Tickers object might cache)
-            # yfinance batch download only gets price data. Need to iterate for info.
-            # This is slower but necessary for P/E, Market Cap, etc.
-            t = yf.Ticker(ticker_symbol)
-            info = t.info
+            # Check cache for fundamentals
+            CACHE_FILE = "fundamental_cache.json"
+            cache = {}
+            if os.path.exists(CACHE_FILE):
+                try:
+                    with open(CACHE_FILE, 'r') as f:
+                        cache = json.load(f)
+                except:
+                    pass
+            
+            # Check if we have valid cached data (e.g., less than 7 days old)
+            cached_info = cache.get(ticker_symbol)
+            use_cache = False
+            if cached_info:
+                last_fetch = cached_info.get('_last_fetched')
+                if last_fetch:
+                    dt = datetime.fromtimestamp(last_fetch)
+                    if datetime.now() - dt < timedelta(days=7):
+                        use_cache = True
+            
+            if use_cache:
+                info = cached_info
+            else:
+                # Fetch fundamentals
+                # Add delay to avoid rate limits
+                time.sleep(2) 
+                t = yf.Ticker(ticker_symbol)
+                try:
+                    info = t.info
+                    # Update cache
+                    info['_last_fetched'] = datetime.now().timestamp()
+                    cache[ticker_symbol] = info
+                    with open(CACHE_FILE, 'w') as f:
+                        json.dump(cache, f)
+                except Exception as e:
+                    print(f"Warning: Could not fetch info for {ticker_symbol}: {e}")
+                    info = {}
             
             # Extract key fundamental metrics we care about
             fundamental_snapshot = {
