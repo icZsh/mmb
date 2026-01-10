@@ -36,16 +36,24 @@ def _history_from_db(ticker: str, start_date: datetime.date) -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        df = db.get_history_since(ticker, start_date)
+        if hasattr(db, "get_history_since"):
+            df = db.get_history_since(ticker, start_date)
+        else:
+            # Older client: returns all rows for ticker; filter here.
+            df = db.get_history(ticker)
     except Exception:
         return pd.DataFrame()
 
     if df is None or df.empty:
         return pd.DataFrame()
 
+    # Normalize schema from DB -> yfinance-like dataframe
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date")
+    df = df[df["date"].dt.date >= start_date].sort_values("date")
+    if df.empty:
+        return pd.DataFrame()
+
     df = df.rename(
         columns={
             "date": "Date",
@@ -60,6 +68,7 @@ def _history_from_db(ticker: str, start_date: datetime.date) -> pd.DataFrame:
     df.index.name = "Date"
     return df[["Open", "High", "Low", "Close", "Volume"]]
 
+
 def get_stock_data(tickers):
     """
     Fetches historical data and fundamental info for a list of tickers.
@@ -69,7 +78,7 @@ def get_stock_data(tickers):
         return {}
         
     print(f"Fetching data for: {', '.join(tickers)}")
-    
+
     # We need enough data for SMA_200 etc. Keep ~2y locally in-memory, but persist in DB.
     latest_trading_day = _latest_trading_day_date()
     start_date = (pd.Timestamp(latest_trading_day) - pd.Timedelta(days=365 * 2)).date()
@@ -78,7 +87,7 @@ def get_stock_data(tickers):
     
     for ticker_symbol in tickers:
         try:
-            # 1) Try DB first; if stale, download ONLY missing daily rows and upsert.
+            # 1) Try DB first; if stale, download only missing daily rows and upsert.
             hist = _history_from_db(ticker_symbol, start_date)
 
             if db:
@@ -89,12 +98,14 @@ def get_stock_data(tickers):
 
                 needs_update = (max_date is None) or (max_date < latest_trading_day)
                 if needs_update:
+                    # Only fetch what's missing (or at least the last 2y on first run)
                     if max_date:
                         fetch_start = max(max_date + timedelta(days=1), start_date)
                     else:
                         fetch_start = start_date
 
-                    fetch_end = latest_trading_day + timedelta(days=1)  # yfinance 'end' is exclusive
+                    # yfinance end date is exclusive; add 1 day to include latest_trading_day.
+                    fetch_end = latest_trading_day + timedelta(days=1)
                     try:
                         dl = yf.download(
                             ticker_symbol,
@@ -105,11 +116,13 @@ def get_stock_data(tickers):
                             multi_level_index=False,
                         )
                         if dl is not None and not dl.empty:
+                            # Keep canonical columns for indicators
                             if "Adj Close" in dl.columns:
                                 dl = dl.drop(columns=["Adj Close"])
                             db.upsert_history(ticker_symbol, dl)
                     except Exception as e:
-                        print(f"Warning: Could not sync {ticker_symbol} to DB: {e}")
+                        # Non-fatal: we'll fall back to whatever we have.
+                        print(f"Warning: DB backfill failed for {ticker_symbol}: {e}")
 
                     # Re-read after attempted backfill
                     hist = _history_from_db(ticker_symbol, start_date)
