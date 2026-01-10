@@ -95,7 +95,7 @@ class MMBDb:
 
     def upsert_history(self, ticker, df):
         """
-        Inserts new historical data for a ticker.
+        Upserts historical data for a ticker using DuckDB-native SQL.
         df should have index as Date and columns: Open, High, Low, Close, Volume
         """
         if df.empty:
@@ -133,18 +133,47 @@ class MMBDb:
             # Register and insert. Casts ensure DB types match even if pandas uses float/int/NA.
             self.con.register("tmp_history_ins", ins)
             try:
-                self.con.execute("""
-                    INSERT OR IGNORE INTO market_history (ticker, date, open, high, low, close, volume)
-                    SELECT
-                        ticker,
-                        CAST(date AS DATE),
-                        CAST(open AS DOUBLE),
-                        CAST(high AS DOUBLE),
-                        CAST(low AS DOUBLE),
-                        CAST(close AS DOUBLE),
-                        CAST(volume AS BIGINT)
-                    FROM tmp_history_ins
-                """)
+                try:
+                    # DuckDB-native upsert: update existing PK rows, insert new ones.
+                    self.con.execute("""
+                        MERGE INTO market_history AS t
+                        USING (
+                            SELECT
+                                CAST(ticker AS VARCHAR) AS ticker,
+                                CAST(date AS DATE) AS date,
+                                CAST(open AS DOUBLE) AS open,
+                                CAST(high AS DOUBLE) AS high,
+                                CAST(low AS DOUBLE) AS low,
+                                CAST(close AS DOUBLE) AS close,
+                                CAST(volume AS BIGINT) AS volume
+                            FROM tmp_history_ins
+                        ) AS s
+                        ON t.ticker = s.ticker AND t.date = s.date
+                        WHEN MATCHED THEN
+                            UPDATE SET
+                                open = s.open,
+                                high = s.high,
+                                low = s.low,
+                                close = s.close,
+                                volume = s.volume
+                        WHEN NOT MATCHED THEN
+                            INSERT (ticker, date, open, high, low, close, volume)
+                            VALUES (s.ticker, s.date, s.open, s.high, s.low, s.close, s.volume)
+                    """)
+                except Exception:
+                    # Fallback for older DuckDB builds where MERGE isn't available.
+                    self.con.execute("""
+                        INSERT OR IGNORE INTO market_history (ticker, date, open, high, low, close, volume)
+                        SELECT
+                            ticker,
+                            CAST(date AS DATE),
+                            CAST(open AS DOUBLE),
+                            CAST(high AS DOUBLE),
+                            CAST(low AS DOUBLE),
+                            CAST(close AS DOUBLE),
+                            CAST(volume AS BIGINT)
+                        FROM tmp_history_ins
+                    """)
             finally:
                 # Best-effort cleanup (older duckdb versions may not support unregister)
                 try:
@@ -175,6 +204,18 @@ class MMBDb:
              # but we'll handle conversion in stock.py
              pass
         return result
+
+    def get_history_since(self, ticker, start_date):
+        """
+        Retrieves history from DB since start_date (inclusive) as a pandas DataFrame.
+        """
+        query = """
+            SELECT date, open, high, low, close, volume
+            FROM market_history
+            WHERE ticker = ? AND date >= ?
+            ORDER BY date ASC
+        """
+        return self.con.execute(query, [ticker, start_date]).df()
 
     def get_recent_news(self, ticker, hours=24):
         """

@@ -68,7 +68,14 @@ def seed_database():
     
     # Configuration
     YEARS_OF_HISTORY = 5
-    start_date = (datetime.now() - timedelta(days=365 * YEARS_OF_HISTORY)).strftime('%Y-%m-%d')
+    today = datetime.now().date()
+    # Weekend-aware "latest trading day" for daily bars
+    latest_trading_day = today
+    if latest_trading_day.weekday() == 5:  # Sat
+        latest_trading_day = latest_trading_day - timedelta(days=1)
+    elif latest_trading_day.weekday() == 6:  # Sun
+        latest_trading_day = latest_trading_day - timedelta(days=2)
+    oldest_start = (datetime.now() - timedelta(days=365 * YEARS_OF_HISTORY)).date()
     
     for ticker in tickers:
         print(f"\nProcessing {ticker}...")
@@ -80,11 +87,32 @@ def seed_database():
                 print(f"  Existing data up to: {max_date}")
         except Exception as e:
             print(f"  Error checking max date: {e}")
+            max_date = None
         
-        print(f"  Fetching history from {start_date}...")
+        # Only download what's missing:
+        # - First run: download YEARS_OF_HISTORY
+        # - Subsequent runs: download from max_date+1 to latest_trading_day
+        if max_date and max_date >= latest_trading_day:
+            print(f"  ✅ Up to date (latest: {latest_trading_day}). Skipping download.")
+            continue
+
+        if max_date:
+            fetch_start = max_date + timedelta(days=1)
+        else:
+            fetch_start = oldest_start
+
+        # yfinance end is exclusive
+        fetch_end = latest_trading_day + timedelta(days=1)
+        print(f"  Fetching history {fetch_start} -> {latest_trading_day}...")
         try:
-            # Avoid artificial slowdown; yfinance already handles throttling reasonably well.
-            data = yf.download(ticker, start=start_date, progress=False, multi_level_index=False)
+            data = yf.download(
+                ticker,
+                start=fetch_start.strftime("%Y-%m-%d"),
+                end=fetch_end.strftime("%Y-%m-%d"),
+                progress=False,
+                auto_adjust=False,
+                multi_level_index=False,
+            )
             
             if not data.empty:
                 count = len(data)
