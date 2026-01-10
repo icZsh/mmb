@@ -29,13 +29,14 @@ class MMBDb:
         self.local_path = str(project_root / "mmb.duckdb")
 
         token = os.getenv("MOTHERDUCK_TOKEN")
+        md_db = os.getenv("MOTHERDUCK_DB", "mmb_db").strip() or "mmb_db"
         if token:
             try:
                 # 'md:' prefix connects to MotherDuck
-                # 'mmb_db' is the database name in MotherDuck
-                self.con = duckdb.connect(f"md:mmb_db?motherduck_token={token}")
+                # Database name is configurable via MOTHERDUCK_DB
+                self.con = duckdb.connect(f"md:{md_db}?motherduck_token={token}")
                 self.backend = "motherduck"
-                logger.info("Connected to MotherDuck (md:mmb_db)")
+                logger.info(f"Connected to MotherDuck (md:{md_db})")
             except Exception as e:
                 logger.error(f"Failed to connect to MotherDuck: {e}. Falling back to local.")
                 if os.getenv("MOTHERDUCK_STRICT", "").strip() == "1":

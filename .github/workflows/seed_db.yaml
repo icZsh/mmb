@@ -23,5 +23,10 @@ jobs:
       - name: Run Seed Script
         env:
           MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          # Fail the workflow if MotherDuck isn't reachable / token is missing,
+          # instead of silently falling back to ephemeral local DuckDB on the runner.
+          MOTHERDUCK_STRICT: "1"
+          # Optional: override if your MotherDuck database name isn't "mmb_db"
+          # MOTHERDUCK_DB: "mmb_db"
         run: |
           python src/db/seed_db.py
