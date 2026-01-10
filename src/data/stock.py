@@ -5,6 +5,66 @@ import os
 import time
 from datetime import datetime, timedelta
 
+try:
+    # MotherDuck/local DuckDB cache (preferred over local pickle cache)
+    from src.db.client import db
+except Exception:
+    db = None
+
+
+def _latest_trading_day_date() -> datetime.date:
+    """
+    Best-effort "latest trading day" (Mon-Fri). This avoids treating weekends
+    as "missing" data.
+    """
+    d = pd.Timestamp.today().normalize()
+    # Saturday=5, Sunday=6
+    if d.weekday() == 5:
+        d = d - pd.Timedelta(days=1)
+    elif d.weekday() == 6:
+        d = d - pd.Timedelta(days=2)
+    return d.date()
+
+
+def _history_from_db(ticker: str, start_date: datetime.date) -> pd.DataFrame:
+    """
+    Returns OHLCV history from DB in yfinance-like shape:
+    - index: DatetimeIndex
+    - columns: Open, High, Low, Close, Volume
+    """
+    if not db:
+        return pd.DataFrame()
+
+    try:
+        # db.get_history currently returns all rows for ticker; filter here.
+        df = db.get_history(ticker)
+    except Exception:
+        return pd.DataFrame()
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # Normalize schema from DB -> yfinance-like dataframe
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df[df["date"].dt.date >= start_date].sort_values("date")
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.rename(
+        columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        }
+    )
+    df = df.set_index("date")
+    # Match yfinance index naming convention
+    df.index.name = "Date"
+    return df[["Open", "High", "Low", "Close", "Volume"]]
+
 def get_stock_data(tickers):
     """
     Fetches historical data and fundamental info for a list of tickers.
@@ -15,50 +75,70 @@ def get_stock_data(tickers):
         
     print(f"Fetching data for: {', '.join(tickers)}")
     
-    # Batch fetch history for efficiency
-    # Using period="2y" to ensure we have enough data for 200 SMA and other indicators
-    
-    HISTORY_CACHE = "market_history.pkl"
-    history_data = None
-    
-    # Check cache
-    if os.path.exists(HISTORY_CACHE):
-        try:
-            mod_time = datetime.fromtimestamp(os.path.getmtime(HISTORY_CACHE))
-            if datetime.now() - mod_time < timedelta(hours=4): # Cache for 4 hours
-                history_data = pd.read_pickle(HISTORY_CACHE)
-                print("Using cached market history.")
-        except Exception as e:
-            print(f"Failed to load history cache: {e}")
-
-    if history_data is None:
-        try:
-            history_data = yf.download(tickers, period="2y", group_by='ticker', auto_adjust=True, progress=False)
-            # Validate data was actually returned
-            if not history_data.empty:
-                history_data.to_pickle(HISTORY_CACHE)
-        except Exception as e:
-            print(f"Error downloading batch data: {e}")
-            return {}
-            
-    data = history_data
+    # We need enough data for SMA_200 etc.
+    latest_trading_day = _latest_trading_day_date()
+    start_date = (pd.Timestamp(latest_trading_day) - pd.Timedelta(days=365 * 2)).date()
 
     results = {}
     
     for ticker_symbol in tickers:
         try:
-            # Handle DataFrame structure
-            if isinstance(data.columns, pd.MultiIndex):
-                # If MultiIndex, the top level is likely Tickers because group_by='ticker'
+            # 1) Try DB first; if stale, backfill missing dates and upsert.
+            hist = _history_from_db(ticker_symbol, start_date)
+            if db:
                 try:
-                     hist = data[ticker_symbol]
-                except KeyError:
-                     # This might happen if yfinance returned something unexpected
-                     print(f"Warning: Could not find {ticker_symbol} in columns.")
-                     continue
-            else:
-                 # Single ticker download often returns simple index
-                 hist = data
+                    max_date = db.get_max_date(ticker_symbol)
+                except Exception:
+                    max_date = None
+
+                needs_update = (max_date is None) or (max_date < latest_trading_day)
+                if needs_update:
+                    # Only fetch what's missing (or at least the last 2y on first run)
+                    if max_date:
+                        fetch_start = max(max_date + timedelta(days=1), start_date)
+                    else:
+                        fetch_start = start_date
+
+                    # yfinance end date is exclusive; add 1 day to include latest_trading_day.
+                    fetch_end = latest_trading_day + timedelta(days=1)
+                    try:
+                        dl = yf.download(
+                            ticker_symbol,
+                            start=fetch_start.strftime("%Y-%m-%d"),
+                            end=fetch_end.strftime("%Y-%m-%d"),
+                            progress=False,
+                            auto_adjust=False,
+                            multi_level_index=False,
+                        )
+                        if dl is not None and not dl.empty:
+                            # Keep canonical columns for indicators
+                            if "Adj Close" in dl.columns:
+                                dl = dl.drop(columns=["Adj Close"])
+                            db.upsert_history(ticker_symbol, dl)
+                    except Exception as e:
+                        # Non-fatal: we'll fall back to whatever we have.
+                        print(f"Warning: DB backfill failed for {ticker_symbol}: {e}")
+
+                    # Re-read after attempted backfill
+                    hist = _history_from_db(ticker_symbol, start_date)
+
+            # 2) If DB is unavailable/empty, fall back to direct download (no local cache).
+            if hist is None or hist.empty:
+                dl = yf.download(
+                    ticker_symbol,
+                    start=pd.Timestamp(start_date).strftime("%Y-%m-%d"),
+                    end=(latest_trading_day + timedelta(days=1)).strftime("%Y-%m-%d"),
+                    progress=False,
+                    auto_adjust=False,
+                    multi_level_index=False,
+                )
+                if dl is None or dl.empty:
+                    print(f"Warning: No history found for {ticker_symbol}")
+                    continue
+                if "Adj Close" in dl.columns:
+                    dl = dl.drop(columns=["Adj Close"])
+                dl.index.name = "Date"
+                hist = dl
 
             # Clean and validate history
             if hist.empty:
