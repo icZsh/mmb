@@ -1,4 +1,3 @@
-
 import yaml
 import yfinance as yf
 import pandas as pd
@@ -6,13 +5,24 @@ from datetime import datetime, timedelta
 import sys
 import os
 import time
+import logging
+from pathlib import Path
+from dotenv import load_dotenv
 
-# Add path
-sys.path.append(os.getcwd())
+# Ensure env vars are loaded (MOTHERDUCK_TOKEN, etc.)
+load_dotenv()
+
+# Make imports + relative paths stable no matter where this script is run from.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 from src.db.client import db
 
-def load_watchlist(path="watchlist.yaml"):
+def load_watchlist(path=None):
+    if path is None:
+        path = PROJECT_ROOT / "watchlist.yaml"
     try:
         with open(path, 'r') as f:
             config = yaml.safe_load(f)
@@ -27,6 +37,19 @@ def seed_database():
         print("❌ Database connection failed. Aborting.")
         return
 
+    # Be explicit about where we're writing (MotherDuck vs local path).
+    try:
+        backend = getattr(db, "backend", "unknown")
+        local_path = getattr(db, "local_path", None)
+        if backend == "motherduck":
+            print("✅ Connected to MotherDuck (md:mmb_db)")
+        elif backend == "local":
+            print(f"⚠️ Using local DuckDB: {local_path}")
+        else:
+            print(f"ℹ️ DB backend: {backend}")
+    except Exception:
+        pass
+
     # Check connection type by inspecting private attribute if possible or just inferring from logs
     # But let's verify connectivity
     try:
@@ -38,7 +61,7 @@ def seed_database():
 
     tickers = load_watchlist()
     if not tickers:
-        print("❌ No tickers found in watchlist.yaml")
+        print(f"❌ No tickers found in {PROJECT_ROOT / 'watchlist.yaml'}")
         return
 
     print(f"Target Tickers: {', '.join(tickers)}")
@@ -60,14 +83,20 @@ def seed_database():
         
         print(f"  Fetching history from {start_date}...")
         try:
-            time.sleep(1) 
+            # Avoid artificial slowdown; yfinance already handles throttling reasonably well.
             data = yf.download(ticker, start=start_date, progress=False, multi_level_index=False)
             
             if not data.empty:
                 count = len(data)
                 print(f"  Downloaded {count} rows.")
                 db.upsert_history(ticker, data)
-                print("  ✅ Upsert complete.")
+                # Verify inserts so we don't "succeed" silently.
+                rows_now = db.con.execute(
+                    "SELECT COUNT(*) FROM market_history WHERE ticker = ?",
+                    [ticker],
+                ).fetchone()[0]
+                max_date_now = db.get_max_date(ticker)
+                print(f"  ✅ Upsert complete. Rows now: {rows_now}, max date: {max_date_now}")
             else:
                 print("  ⚠️ No data returned.")
                 

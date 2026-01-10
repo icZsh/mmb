@@ -2,6 +2,8 @@
 import duckdb
 import os
 import logging
+import math
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Ensure env vars are loaded if this module is imported directly or by a script that forgot to load them
@@ -12,6 +14,8 @@ logger = logging.getLogger(__name__)
 class MMBDb:
     def __init__(self):
         self.con = None
+        self.backend = None  # "motherduck" | "local"
+        self.local_path = None
         self.connect()
         self.init_schema()
 
@@ -19,19 +23,29 @@ class MMBDb:
         """
         Connects to MotherDuck using the token from env, or falls back to local file.
         """
+        # Keep local DB path stable no matter what the current working directory is.
+        # This avoids accidentally creating/seeding multiple mmb.duckdb files in different directories.
+        project_root = Path(__file__).resolve().parents[2]
+        self.local_path = str(project_root / "mmb.duckdb")
+
         token = os.getenv("MOTHERDUCK_TOKEN")
         if token:
             try:
                 # 'md:' prefix connects to MotherDuck
                 # 'mmb_db' is the database name in MotherDuck
                 self.con = duckdb.connect(f"md:mmb_db?motherduck_token={token}")
+                self.backend = "motherduck"
                 logger.info("Connected to MotherDuck (md:mmb_db)")
             except Exception as e:
                 logger.error(f"Failed to connect to MotherDuck: {e}. Falling back to local.")
-                self.con = duckdb.connect("mmb.duckdb")
+                if os.getenv("MOTHERDUCK_STRICT", "").strip() == "1":
+                    raise
+                self.con = duckdb.connect(self.local_path)
+                self.backend = "local"
         else:
-            logger.info("No MOTHERDUCK_TOKEN found. Using local DuckDB (mmb.duckdb).")
-            self.con = duckdb.connect("mmb.duckdb")
+            logger.info(f"No MOTHERDUCK_TOKEN found. Using local DuckDB ({self.local_path}).")
+            self.con = duckdb.connect(self.local_path)
+            self.backend = "local"
 
     def init_schema(self):
         """
@@ -86,29 +100,60 @@ class MMBDb:
         if df.empty:
             return
 
-        # Prepare list of tuples
-        data = []
-        for index, row in df.iterrows():
-            # index is Timestamp
-            date_val = index.date()
-            data.append((
-                ticker,
-                date_val,
-                row.get('Open', 0),
-                row.get('High', 0),
-                row.get('Low', 0),
-                row.get('Close', 0),
-                int(row.get('Volume', 0))
-            ))
-            
-        # Bulk insert/ignore to handle duplicates overlap
+        # Fast path: register Pandas DF and INSERT..SELECT (avoids Python row loops).
+        # This is dramatically faster than iterrows() + executemany() for typical OHLCV data.
         try:
-            self.con.executemany("""
-                INSERT OR IGNORE INTO market_history (ticker, date, open, high, low, close, volume)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, data)
+            import pandas as pd
+
+            tmp = df.copy()
+            # Ensure we have a date column.
+            if "Date" not in tmp.columns:
+                tmp = tmp.reset_index()
+            date_col = "Date" if "Date" in tmp.columns else tmp.columns[0]
+
+            # Normalize columns from yfinance output (can include 'Adj Close').
+            cols = {c: c.strip().lower().replace(" ", "_") for c in tmp.columns}
+            tmp = tmp.rename(columns=cols)
+
+            # After rename, date_col becomes lowercased too.
+            date_col_l = date_col.strip().lower().replace(" ", "_")
+
+            # Build canonical insert frame.
+            ins = pd.DataFrame({
+                "ticker": ticker,
+                "date": pd.to_datetime(tmp[date_col_l]).dt.date,
+                "open": tmp.get("open"),
+                "high": tmp.get("high"),
+                "low": tmp.get("low"),
+                "close": tmp.get("close"),
+                "volume": tmp.get("volume"),
+            })
+
+            # Register and insert. Casts ensure DB types match even if pandas uses float/int/NA.
+            self.con.register("tmp_history_ins", ins)
+            try:
+                self.con.execute("""
+                    INSERT OR IGNORE INTO market_history (ticker, date, open, high, low, close, volume)
+                    SELECT
+                        ticker,
+                        CAST(date AS DATE),
+                        CAST(open AS DOUBLE),
+                        CAST(high AS DOUBLE),
+                        CAST(low AS DOUBLE),
+                        CAST(close AS DOUBLE),
+                        CAST(volume AS BIGINT)
+                    FROM tmp_history_ins
+                """)
+            finally:
+                # Best-effort cleanup (older duckdb versions may not support unregister)
+                try:
+                    self.con.unregister("tmp_history_ins")
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error inserting history for {ticker}: {e}")
+            # Don't silently succeed: callers should see the failure.
+            raise
 
     def get_history(self, ticker, limit_days=365):
         """
@@ -183,7 +228,6 @@ class MMBDb:
 
 # Singleton instance
 from datetime import datetime, timedelta
-# (re-importing here because class method used it)
 
 try:
     db = MMBDb()
