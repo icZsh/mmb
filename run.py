@@ -84,12 +84,29 @@ def main():
                 latest_close = 0 # Fallback
                 
             prev = analyzed_df.iloc[-2] if len(analyzed_df) > 1 else latest
-            change_pct = ((latest_close - prev['Close']) / prev['Close']) * 100
+            
+            # 1. Standard Return (Wallet impact)
+            change_start_value = prev['Close']
+            change_pct = ((latest_close - change_start_value) / change_start_value) * 100
+
+            # 2. The "Gap" (Overnight move)
+            # Did it jump overnight?
+            gap_pct = ((latest['Open'] - prev['Close']) / prev['Close']) * 100
+
+            # 3. Intraday Movement (Session sentiment)
+            # What happened after the open?
+            intraday_move = ((latest['Close'] - latest['Open']) / latest['Open']) * 100
+
+            # 4. Volatility (High - Low)
+            day_range_pct = ((latest['High'] - latest['Low']) / latest['Open']) * 100
             
             watchlist_data.append({
                 'ticker': ticker,
                 'price': float(latest_close),
                 'change_pct': change_pct,
+                'gap_pct': gap_pct,
+                'intraday_move': intraday_move,
+                'day_range_pct': day_range_pct,
                 'rsi': float(latest.get('RSI', 0)),
                 'signals': signals,
                 'narrative': narrative,
