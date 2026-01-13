@@ -14,14 +14,18 @@ except Exception:
 
 def _latest_trading_day_date() -> datetime.date:
     """
-    Best-effort "latest trading day" (Mon-Fri). This avoids treating weekends
-    as "missing" data when syncing daily bars.
+    Best-effort "latest trading day" (Mon-Fri) based on US/Eastern time.
+    This avoids treating weekends as "missing" data when syncing daily bars.
     """
-    d = pd.Timestamp.today().normalize()
-    # Saturday=5, Sunday=6
-    if d.weekday() == 5:
+    # Use US/Eastern time as the source of truth for "today"
+    # This prevents Monday morning in Asia from being treated as "future" relative to Sunday in NY,
+    # or Sunday evening in NY being treated as Monday.
+    d = pd.Timestamp.now(tz='US/Eastern').normalize()
+    
+    # Monday=0, Sunday=6
+    if d.weekday() == 5: # Saturday
         d = d - pd.Timedelta(days=1)
-    elif d.weekday() == 6:
+    elif d.weekday() == 6: # Sunday
         d = d - pd.Timedelta(days=2)
     return d.date()
 
@@ -119,6 +123,10 @@ def get_stock_data(tickers):
                             # Keep canonical columns for indicators
                             if "Adj Close" in dl.columns:
                                 dl = dl.drop(columns=["Adj Close"])
+                            
+                            # Filter out weekends
+                            dl = dl[dl.index.dayofweek < 5]
+                            
                             db.upsert_history(ticker_symbol, dl)
                     except Exception as e:
                         # Non-fatal: we'll fall back to whatever we have.
@@ -142,6 +150,13 @@ def get_stock_data(tickers):
                     continue
                 if "Adj Close" in dl.columns:
                     dl = dl.drop(columns=["Adj Close"])
+                
+                # Filter out weekends explicitly
+                if not dl.empty:
+                    # dl.index is DatetimeIndex
+                    # 0=Mon, ..., 5=Sat, 6=Sun
+                    dl = dl[dl.index.dayofweek < 5]
+
                 dl.index.name = "Date"
                 hist = dl
                 # Best-effort persist if DB is available

@@ -68,7 +68,7 @@ def seed_database():
     
     # Configuration
     YEARS_OF_HISTORY = 5
-    today = datetime.now().date()
+    today = pd.Timestamp.now(tz='US/Eastern').date()
     # Weekend-aware "latest trading day" for daily bars
     latest_trading_day = today
     if latest_trading_day.weekday() == 5:  # Sat
@@ -114,6 +114,10 @@ def seed_database():
                 multi_level_index=False,
             )
             
+            if not data.empty:
+                # Filter out weekends (0=Mon, 5=Sat, 6=Sun)
+                data = data[data.index.dayofweek < 5]
+
             if not data.empty:
                 count = len(data)
                 print(f"  Downloaded {count} rows.")
