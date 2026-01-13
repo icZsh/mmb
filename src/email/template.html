@@ -125,7 +125,12 @@
         <div class="market-item">
             <strong>{{ data.name }}</strong>
             <span class="{{ 'positive' if data.change_pct >= 0 else 'negative' }}">
-                {{ data.label }}
+                {# Show both price and percent change (label is percent-only for most tickers) #}
+                {% if ticker in ['SPY', 'QQQ'] %}
+                    ${{ "%.2f"|format(data.price) }} ({{ "%+.1f"|format(data.change_pct) }}%)
+                {% else %}
+                    {{ "%.2f"|format(data.price) }} ({{ "%+.1f"|format(data.change_pct) }}%)
+                {% endif %}
             </span>
         </div>
         {% endfor %}
