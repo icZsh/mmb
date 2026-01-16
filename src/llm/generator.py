@@ -9,14 +9,6 @@ def generate_narrative(ticker, stock_data, signals, news):
     Generates a narrative for the stock using OpenAI.
     """
     api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key or api_key == "your_openai_api_key_here":
-        return {
-            "summary": "LLM generation skipped (No API Key).",
-            "bull_case": ["N/A"],
-            "bear_case": ["N/A"],
-            "watch": "N/A"
-        }
-        
     client = openai.OpenAI(api_key=api_key)
     
     # Prepare context

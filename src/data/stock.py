@@ -91,80 +91,54 @@ def get_stock_data(tickers):
     
     for ticker_symbol in tickers:
         try:
-            # 1) Try DB first; if stale, download only missing daily rows and upsert.
+            # 1) Try DB first
             hist = _history_from_db(ticker_symbol, start_date)
 
-            if db:
-                try:
-                    max_date = db.get_max_date(ticker_symbol)
-                except Exception:
-                    max_date = None
-
-                needs_update = (max_date is None) or (max_date < latest_trading_day)
-                if needs_update:
-                    # Only fetch what's missing (or at least the last 2y on first run)
-                    if max_date:
-                        fetch_start = max(max_date + timedelta(days=1), start_date)
-                    else:
-                        fetch_start = start_date
-
-                    # yfinance end date is exclusive; add 1 day to include latest_trading_day.
-                    fetch_end = latest_trading_day + timedelta(days=1)
-                    try:
-                        dl = yf.download(
-                            ticker_symbol,
-                            start=fetch_start.strftime("%Y-%m-%d"),
-                            end=fetch_end.strftime("%Y-%m-%d"),
-                            progress=False,
-                            auto_adjust=False,
-                            multi_level_index=False,
-                        )
-                        if dl is not None and not dl.empty:
-                            # Keep canonical columns for indicators
-                            if "Adj Close" in dl.columns:
-                                dl = dl.drop(columns=["Adj Close"])
-                            
-                            # Filter out weekends
-                            dl = dl[dl.index.dayofweek < 5]
-                            
-                            db.upsert_history(ticker_symbol, dl)
-                    except Exception as e:
-                        # Non-fatal: we'll fall back to whatever we have.
-                        print(f"Warning: DB backfill failed for {ticker_symbol}: {e}")
-
-                    # Re-read after attempted backfill
-                    hist = _history_from_db(ticker_symbol, start_date)
-
-            # 2) If DB is unavailable/empty, fall back to direct download (no local cache).
-            if hist is None or hist.empty:
-                dl = yf.download(
-                    ticker_symbol,
-                    start=pd.Timestamp(start_date).strftime("%Y-%m-%d"),
-                    end=(latest_trading_day + timedelta(days=1)).strftime("%Y-%m-%d"),
-                    progress=False,
-                    auto_adjust=False,
-                    multi_level_index=False,
-                )
-                if dl is None or dl.empty:
-                    print(f"Warning: No history found for {ticker_symbol}")
-                    continue
-                if "Adj Close" in dl.columns:
-                    dl = dl.drop(columns=["Adj Close"])
+            # 2) Gaps Calculation
+            # If DB data is stale (e.g. crawler hasn't run today, or we are mid-day),
+            # we might want to fetch the "latest" daily bar from Yahoo to complete the dataset.
+            # However, the requirement says "stock.py will only need to fetch today's data without worrying about upserting"
+            
+            # Find the last date we have
+            if not hist.empty:
+                last_db_date = hist.index[-1].date()
+            else:
+                last_db_date = start_date - timedelta(days=1)
+            
+            # If we are missing data up to latest_trading_day (inclusive)
+            if last_db_date < latest_trading_day:
+                fetch_start = last_db_date + timedelta(days=1)
+                fetch_end = latest_trading_day + timedelta(days=1)
                 
-                # Filter out weekends explicitly
-                if not dl.empty:
-                    # dl.index is DatetimeIndex
-                    # 0=Mon, ..., 5=Sat, 6=Sun
-                    dl = dl[dl.index.dayofweek < 5]
-
-                dl.index.name = "Date"
-                hist = dl
-                # Best-effort persist if DB is available
-                if db:
-                    try:
-                        db.upsert_history(ticker_symbol, hist)
-                    except Exception:
-                        pass
+                # Fetch ephemeral data
+                try:
+                    dl = yf.download(
+                        ticker_symbol,
+                        start=fetch_start.strftime("%Y-%m-%d"),
+                        end=fetch_end.strftime("%Y-%m-%d"),
+                        progress=False,
+                        auto_adjust=False,
+                        multi_level_index=False,
+                    )
+                    
+                    if dl is not None and not dl.empty:
+                        if "Adj Close" in dl.columns:
+                            dl = dl.drop(columns=["Adj Close"])
+                        
+                        # Filter out weekends
+                        dl = dl[dl.index.dayofweek < 5]
+                        dl.index.name = "Date"
+                        
+                        # Concat with history (in-memory only)
+                        # Ensure columns match
+                        ephemeral_hist = dl[["Open", "High", "Low", "Close", "Volume"]]
+                        hist = pd.concat([hist, ephemeral_hist])
+                        
+                        # Deduplicate in case of overlap logic errors (keep last)
+                        hist = hist[~hist.index.duplicated(keep='last')]
+                        
+                except Exception as e:
+                    print(f"Warning: Failed to fetch ephemeral data for {ticker_symbol}: {e}")
 
             # Clean and validate history
             if hist.empty:

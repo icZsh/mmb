@@ -268,6 +268,28 @@ class MMBDb:
         except Exception as e:
             logger.error(f"Error inserting news for {ticker}: {e}")
 
+    def get_all_tickers(self):
+        """
+        Returns a list of all unique tickers in the database.
+        """
+        result = self.con.execute("SELECT DISTINCT ticker FROM market_history").fetchall()
+        return [r[0] for r in result]
+
+    def delete_ticker(self, ticker):
+        """
+        Removes all data for a specific ticker.
+        """
+        self.con.execute("DELETE FROM market_history WHERE ticker = ?", [ticker])
+        self.con.execute("DELETE FROM news_items WHERE ticker = ?", [ticker])
+        logger.info(f"Deleted data for ticker: {ticker}")
+
+    def delete_old_data(self, cutoff_date):
+        """
+        Removes market history older than the cutoff_date.
+        """
+        self.con.execute("DELETE FROM market_history WHERE date < ?", [cutoff_date])
+        logger.info(f"Deleted market history older than {cutoff_date}")
+
 # Singleton instance
 from datetime import datetime, timedelta
 
