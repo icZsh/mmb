@@ -1,15 +1,24 @@
 import os
-import openai
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def generate_narrative(ticker, stock_data, signals, news):
     """
-    Generates a narrative for the stock using OpenAI.
+    Generates a narrative for the stock using Google's Gemini.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    client = openai.OpenAI(api_key=api_key)
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not found in environment variables.")
+        return {
+            "summary": "Configuration error: Missing API Key.",
+            "bull_case": [],
+            "bear_case": [],
+            "watch": "Check .env configuration."
+        }
+
+    genai.configure(api_key=api_key)
     
     # Prepare context
     news_summary = ""
@@ -19,18 +28,28 @@ def generate_narrative(ticker, stock_data, signals, news):
         news_summary = "No recent major news."
         
     # Prepare technical context
-    latest = stock_data['history'].iloc[-1]
-    prev = stock_data['history'].iloc[-2] if len(stock_data['history']) > 1 else latest
-    
-    change_pct = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
+    hist = stock_data.get('history')
+    if hist is None or hist.empty:
+         # Handle case where history is empty or missing
+         latest_close = "N/A"
+         change_pct_str = "N/A"
+         rsi_val = "N/A"
+    else:
+        latest = hist.iloc[-1]
+        prev = hist.iloc[-2] if len(hist) > 1 else latest
+        
+        change_pct = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
+        latest_close = f"{latest['Close']:.2f}"
+        change_pct_str = f"{change_pct:+.2f}%"
+        rsi_val = latest.get('RSI', 'N/A')
     
     context = f"""
     Ticker: {ticker}
-    Sector: {stock_data['info'].get('sector')}
-    Industry: {stock_data['info'].get('industry')}
+    Sector: {stock_data.get('info', {}).get('sector', 'N/A')}
+    Industry: {stock_data.get('info', {}).get('industry', 'N/A')}
     
-    Price: {latest['Close']:.2f} ({change_pct:+.2f}%)
-    RSI: {stock_data['history'].iloc[-1].get('RSI', 'N/A')}
+    Price: {latest_close} ({change_pct_str})
+    RSI: {rsi_val}
     Trend: {signals.get('Trend')}
     Momentum: {signals.get('Momentum')}
     Volatility: {signals.get('Volatility')}
@@ -60,18 +79,20 @@ def generate_narrative(ticker, stock_data, signals, news):
     """
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful financial assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=250,
-            temperature=0.7
-        )
+        model = genai.GenerativeModel('gemini-3-flash-preview')
         
-        content = response.choices[0].message.content
-        return parse_llm_response(content)
+        response = model.generate_content(prompt)
+        
+        # Gemini response structure handling
+        if response.text:
+            return parse_llm_response(response.text)
+        else:
+             return {
+                "summary": "Error: No content generated.",
+                "bull_case": [],
+                "bear_case": [],
+                "watch": "Check manual news sources."
+            }
         
     except Exception as e:
         print(f"Error generating narrative for {ticker}: {e}")
@@ -140,4 +161,11 @@ if __name__ == "__main__":
     mock_stock = {"history": mock_df, "info": mock_info}
     mock_news = [{"title": "Company releases new AI product", "publisher": "TechCrunch"}]
     
-    print(generate_narrative("TEST", mock_stock, mock_signals, mock_news))
+    # Simple test execution
+    print("Testing Gemini Generator...")
+    try:
+        result = generate_narrative("TEST", mock_stock, mock_signals, mock_news)
+        print("\nGenerated Result:")
+        print(result)
+    except Exception as e:
+        print(f"\nTest Failed: {e}")
