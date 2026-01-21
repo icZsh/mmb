@@ -1,6 +1,6 @@
 yfinance<1.0
 pandas
-openai
+google-generativeai
 jinja2
 python-dotenv
 requests
