@@ -1,106 +1,135 @@
 import os
+import time
 from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
-def generate_narrative(ticker, stock_data, signals, news):
+def generate_narrative(ticker, stock_data, signals, news, max_retries=3):
     """
-    Generates a narrative for the stock using Google's Gemini.
+    Generates a narrative for the stock using Google's Gemini with retry logic.
+
+    Args:
+        ticker: Stock ticker symbol
+        stock_data: Dict with 'history' DataFrame and 'info' dict
+        signals: Dict with technical signals
+        news: List of news items
+        max_retries: Maximum number of retry attempts (default: 3)
     """
-    try:
-        # The client automatically uses GEMINI_API_KEY or GOOGLE_API_KEY from environment
-        client = genai.Client()
-        
-        # Prepare context
-        news_summary = ""
-        for n in news:
-            news_summary += f"- {n.get('title')} (Source: {n.get('publisher')})\n"
-        if not news_summary:
-            news_summary = "No recent major news."
-            
-        # Prepare technical context
-        hist = stock_data.get('history')
-        if hist is None or hist.empty:
-             # Handle case where history is empty or missing
-             latest_close = "N/A"
-             change_pct_str = "N/A"
-             rsi_val = "N/A"
-        else:
-            latest = hist.iloc[-1]
-            prev = hist.iloc[-2] if len(hist) > 1 else latest
-            
-            change_pct = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
-            latest_close = f"{latest['Close']:.2f}"
-            change_pct_str = f"{change_pct:+.2f}%"
-            rsi_val = latest.get('RSI', 'N/A')
-    
-        context = f"""
-        Ticker: {ticker}
-        Sector: {stock_data.get('info', {}).get('sector', 'N/A')}
-        Industry: {stock_data.get('info', {}).get('industry', 'N/A')}
-        
-        Price: {latest_close} ({change_pct_str})
-        RSI: {rsi_val}
-        Trend: {signals.get('Trend')}
-        Momentum: {signals.get('Momentum')}
-        Volatility: {signals.get('Volatility')}
-        
-        News Highlights:
-        {news_summary}
-        """
-        
-        prompt = f"""
-        You are a financial analyst writing a morning brief for an investor.
-        Analyze the following data for {ticker} and provide a concise update.
-        
-        Data:
-        {context}
-        
-        Format output EXACTLY as follows (json format not needed, just the sections):
-        SUMMARY: [One sentence summary of what changed and why]
-        BULL: [1-2 concise bullet points for bull case]
-        BEAR: [1-2 concise bullet points for bear case]
-        WATCH: [What to watch today in 1 sentence]
-        
-        Rules:
-        - Be brief. Total reading time should be < 30 seconds.
-        - Focus on the "Why" and "So What".
-        - Do not give financial advice.
-        - Use Markdown formatting for bullets.
-        """
-        
-        # Use gemini-2.0-flash as the standard model for the new SDK
-        # User previously asked for 3, but 2.0 Flash is the documented "Flash" model usually coupled with this SDK update.
-        # I'll stick to 'gemini-2.0-flash' or 'gemini-1.5-flash' unless I'm sure 3 is available.
-        # But the user specifically asked for "gemini 3" earlier.
-        # And he used "gemini-3-flash-preview" in his manual edit.
-        # I will respect that model name choice but wrap it safely.
-        
-        response = client.models.generate_content(
-            model='gemini-3-flash-preview', 
-            contents=prompt
-        )
-        
-        # New SDK response structure handling
-        if response.text:
-            return parse_llm_response(response.text)
-        else:
-             return {
-                "summary": "Error: No content generated.",
-                "bull_case": [],
-                "bear_case": [],
-                "watch": "Check manual news sources."
-            }
-        
-    except Exception as e:
-        print(f"Error generating narrative for {ticker}: {e}")
-        return {
-            "summary": "Error generating narrative.",
-            "bull_case": [],
-            "bear_case": [],
-            "watch": "Check manual news sources."
-        }
+    # Prepare context (moved outside retry loop for efficiency)
+    news_summary = ""
+    for n in news:
+        news_summary += f"- {n.get('title')} (Source: {n.get('publisher')})\n"
+    if not news_summary:
+        news_summary = "No recent major news."
+
+    # Prepare technical context
+    hist = stock_data.get('history')
+    if hist is None or hist.empty:
+         # Handle case where history is empty or missing
+         latest_close = "N/A"
+         change_pct_str = "N/A"
+         rsi_val = "N/A"
+    else:
+        latest = hist.iloc[-1]
+        prev = hist.iloc[-2] if len(hist) > 1 else latest
+
+        change_pct = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
+        latest_close = f"{latest['Close']:.2f}"
+        change_pct_str = f"{change_pct:+.2f}%"
+        rsi_val = latest.get('RSI', 'N/A')
+
+    context = f"""
+    Ticker: {ticker}
+    Sector: {stock_data.get('info', {}).get('sector', 'N/A')}
+    Industry: {stock_data.get('info', {}).get('industry', 'N/A')}
+
+    Price: {latest_close} ({change_pct_str})
+    RSI: {rsi_val}
+    Trend: {signals.get('Trend')}
+    Momentum: {signals.get('Momentum')}
+    Volatility: {signals.get('Volatility')}
+
+    News Highlights:
+    {news_summary}
+    """
+
+    prompt = f"""
+    You are a financial analyst writing a morning brief for an investor.
+    Analyze the following data for {ticker} and provide a concise update.
+
+    Data:
+    {context}
+
+    Format output EXACTLY as follows (json format not needed, just the sections):
+    SUMMARY: [One sentence summary of what changed and why]
+    BULL: [1-2 concise bullet points for bull case]
+    BEAR: [1-2 concise bullet points for bear case]
+    WATCH: [What to watch today in 1 sentence]
+
+    Rules:
+    - Be brief. Total reading time should be < 30 seconds.
+    - Focus on the "Why" and "So What".
+    - Do not give financial advice.
+    - Use Markdown formatting for bullets.
+    """
+
+    # Retry loop with exponential backoff
+    for attempt in range(max_retries):
+        try:
+            # The client automatically uses GEMINI_API_KEY or GOOGLE_API_KEY from environment
+            client = genai.Client()
+
+            response = client.models.generate_content(
+                model='gemini-3-flash-preview',
+                contents=prompt
+            )
+
+            # New SDK response structure handling
+            if response.text:
+                result = parse_llm_response(response.text)
+                print(f"✓ Generated narrative for {ticker} (attempt {attempt + 1}/{max_retries})")
+                return result
+            else:
+                print(f"⚠ No content generated for {ticker} (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"  Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+
+                return {
+                    "summary": "Error: No content generated.",
+                    "bull_case": [],
+                    "bear_case": [],
+                    "watch": "Check manual news sources."
+                }
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"✗ Error generating narrative for {ticker} (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+            # Check if it's a rate limit error
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
+                if attempt < max_retries - 1:
+                    wait_time = 5 * (attempt + 1)  # Longer backoff for rate limits: 5s, 10s, 15s
+                    print(f"  Rate limit detected. Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+            elif attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                print(f"  Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+
+    # All retries exhausted
+    print(f"✗ Failed to generate narrative for {ticker} after {max_retries} attempts")
+    return {
+        "summary": "Unable to generate narrative.",
+        "bull_case": [],
+        "bear_case": [],
+        "watch": "Check manual news sources."
+    }
 
 def parse_llm_response(text):
     """

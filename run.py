@@ -54,27 +54,31 @@ def main():
     # Batch fetch raw data
     raw_data = get_stock_data(tickers)
     
-    for ticker in tickers:
+    for idx, ticker in enumerate(tickers):
         try:
-            logger.info(f"Analyzing {ticker}...")
-            
+            logger.info(f"Analyzing {ticker} ({idx + 1}/{len(tickers)})...")
+
             if ticker not in raw_data:
                 logger.warning(f"No data for {ticker}. Skipping.")
                 continue
-                
+
             stock_info = raw_data[ticker]
             history = stock_info['history']
             info = stock_info['info']
-            
+
             # Technical Analysis
             analyzed_df = add_indicators(history)
             signals = generate_signals(analyzed_df)
-            
+
             # News
             news = get_agg_news(ticker)
-            
-            # LLM Narrative
+
+            # LLM Narrative (with retry logic built-in)
             narrative = generate_narrative(ticker, {'history': analyzed_df, 'info': info}, signals, news)
+
+            # Add delay between stocks to avoid rate limiting (except for last stock)
+            if idx < len(tickers) - 1:
+                time.sleep(2)  # 2 second delay between stocks
             
             # Prepare data for template
             latest = analyzed_df.iloc[-1]
