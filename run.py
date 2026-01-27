@@ -1,3 +1,7 @@
+import warnings
+# Suppress pandas deprecation warnings from yfinance (upstream issue)
+warnings.filterwarnings("ignore", message=".*Timestamp.utcnow.*", category=DeprecationWarning)
+
 import yaml
 import logging
 import sys
