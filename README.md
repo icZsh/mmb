@@ -22,7 +22,7 @@ It aggregates market data, performs technical analysis, fetches relevant news, a
 ## 🛠️ Setup & Installation
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.12+
 - OpenAI API Key
 
 ### 1. Clone & Install
