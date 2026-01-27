@@ -11,7 +11,7 @@ It aggregates market data, performs technical analysis, fetches relevant news, a
 - **Technical Analysis**:
     - Indicators: RSI, MACD, Bollinger Bands, Moving Averages.
     - Signals: Trend (Bullish/Bearish), Momentum (Overbought/Oversold), and Volatility flags.
-- **AI Narratives**: Uses OpenAI (GPT-4o-mini) to generate:
+- **AI Narratives**: Uses Google Gemini (gemini-3-flash-preview) to generate:
     - "Why it matters" summaries.
     - Bull & Bear cases.
     - "What to watch today" highlights.
@@ -23,13 +23,13 @@ It aggregates market data, performs technical analysis, fetches relevant news, a
 
 ### Prerequisites
 - Python 3.12+
-- OpenAI API Key
+- Google Gemini API Key
 
 ### 1. Clone & Install
 ```bash
 git clone https://github.com/yourusername/mmb.git
 cd mmb
-python3 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -41,7 +41,7 @@ cp .env.example .env
 ```
 Fill in your credentials:
 ```ini
-OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=your_gemini_api_key_here
 NEWS_API_KEY=... (Optional)
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
@@ -88,7 +88,7 @@ mmb/
 │   ├── data/           # Market & Stock data fetchers
 │   ├── analysis/       # Technical indicators & signals
 │   ├── news/           # News aggregator
-│   ├── llm/            # OpenAI narrative generator
+│   ├── llm/            # Google Gemini narrative generator
 │   └── email/          # HTML renderer & Sender
 ├── watchlist.yaml      # Configuration
 ├── run.py              # Main entry point
