@@ -78,6 +78,8 @@ To enable this:
 2. Go to **Settings > Secrets and variables > Actions**.
 3. Add the environment variables from your `.env` file as **Repository Secrets**.
 
+This repo also includes `.github/workflows/keepalive.yaml`, which makes a minimal monthly commit to `.github/keepalive.md` so scheduled workflows in public repositories are less likely to be auto-disabled for inactivity. The workflow needs `contents: write` permission to push the keepalive commit.
+
 You can also manually trigger the workflow from the "Actions" tab.
 
 ## 📂 Project Structure
