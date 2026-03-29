@@ -2,7 +2,28 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+from pathlib import Path
 from datetime import datetime
+
+def save_to_obsidian(html_content):
+    """
+    Saves the briefing HTML to an Obsidian vault using YYYY/MM/ directory structure.
+    Configured via OBSIDIAN_VAULT_PATH env var. Skips if not set.
+    """
+    vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+    if not vault_path:
+        return False
+
+    now = datetime.now()
+    year_month_dir = Path(vault_path) / now.strftime("%Y") / now.strftime("%m")
+    year_month_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"Morning Market Briefing – {now.strftime('%Y-%m-%d')}.html"
+    filepath = year_month_dir / filename
+    filepath.write_text(html_content, encoding="utf-8")
+    print(f"Saved briefing to Obsidian vault: {filepath}")
+    return True
+
 
 def send_email(html_content, recipient=None):
     """

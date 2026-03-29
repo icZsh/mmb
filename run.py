@@ -20,7 +20,7 @@ from src.analysis.signals import generate_signals
 from src.news.aggregator import get_agg_news
 from src.llm.generator import generate_narrative
 from src.email.renderer import render_email
-from src.email.sender import send_email
+from src.email.sender import send_email, save_to_obsidian
 
 # Configure logging
 logging.basicConfig(
@@ -128,10 +128,13 @@ def main():
     logger.info("Rendering email...")
     html_content = render_email(market_snapshot, watchlist_data)
     
-    # 5. Send Email
+    # 5. Save to Obsidian vault (if configured)
+    save_to_obsidian(html_content)
+
+    # 6. Send Email
     logger.info("Sending email...")
     success = send_email(html_content)
-    
+
     if success:
         logger.info("Briefing completed successfully.")
     else:
