@@ -21,6 +21,7 @@ from src.news.aggregator import get_agg_news
 from src.llm.generator import generate_narrative
 from src.email.renderer import render_email
 from src.email.sender import send_email, save_to_obsidian
+from src.output.exporter import save_structured_brief
 
 # Configure logging
 logging.basicConfig(
@@ -128,8 +129,9 @@ def main():
     logger.info("Rendering email...")
     html_content = render_email(market_snapshot, watchlist_data)
     
-    # 5. Save to Obsidian vault (if configured)
+    # 5. Save outputs for downstream consumption
     save_to_obsidian(html_content)
+    save_structured_brief(market_snapshot, watchlist_data)
 
     # 6. Send Email
     logger.info("Sending email...")

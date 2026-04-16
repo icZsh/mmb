@@ -70,6 +70,10 @@ python run.py
 ```
 If SMTP credentials are not set, the report will be saved locally as `latest_briefing.html` for preview.
 
+If `OBSIDIAN_VAULT_PATH` is set, the run also writes a machine-readable JSON artifact to:
+- `Hermes/Morning Briefing/YYYY/MM/YYYY-MM-DD-mmb.json`
+inside the vault. This is intended for downstream consumers like Isaac's 7:30 AM Telegram market brief.
+
 ### Run via GitHub Actions
 This project is configured to run automatically every day at **8:00 AM America/Los_Angeles time**.
 
