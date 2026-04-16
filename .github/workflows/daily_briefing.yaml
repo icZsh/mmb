@@ -1,33 +1,51 @@
 name: Morning Market Briefing
 
 on:
-  workflow_run:
-    workflows: ["Stock Crawler"]
-    types:
-      - completed
+  schedule:
+    # GitHub Actions cron is UTC only. We schedule both 15:00 and 16:00 UTC,
+    # then gate inside the job using America/Los_Angeles local time so the
+    # briefing always runs at 8:00 AM PT across PST/PDT.
+    - cron: '0 15 * * *'
+    - cron: '0 16 * * *'
   workflow_dispatch: # Allow manual trigger
 
 jobs:
   run-briefing:
-    # Only run automatically if the upstream workflow succeeded; always allow manual runs.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     
     steps:
+    - name: Check local schedule window
+      id: schedule_gate
+      run: |
+        LOCAL_HOUR=$(TZ=America/Los_Angeles date +%H)
+        echo "local_hour=$LOCAL_HOUR" >> "$GITHUB_OUTPUT"
+
+        if [ "$LOCAL_HOUR" = "08" ]; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "Proceeding: local time is within the 8 AM PT window."
+        else
+          echo "run=false" >> "$GITHUB_OUTPUT"
+          echo "Skipping scheduled run outside the 8 AM PT window."
+        fi
+
     - name: Checkout code
+      if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule_gate.outputs.run == 'true' }}
       uses: actions/checkout@v3
       
     - name: Set up Python
+      if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule_gate.outputs.run == 'true' }}
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
         
     - name: Install dependencies
+      if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule_gate.outputs.run == 'true' }}
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        
+
     - name: Run Briefing
+      if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule_gate.outputs.run == 'true' }}
       env:
         # LLM key(s): generator supports GEMINI_API_KEY.
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

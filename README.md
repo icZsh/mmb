@@ -1,6 +1,6 @@
 # Morning Market Briefing (MMB) 📈
 
-**Morning Market Briefing (MMB)** is an automated tool designed to deliver a concise, data-driven daily investment briefing directly to your inbox every morning at 8:00 AM PST.
+**Morning Market Briefing (MMB)** is an automated tool designed to deliver a concise, data-driven daily investment briefing directly to your inbox every morning at 8:00 AM America/Los_Angeles time.
 
 It aggregates market data, performs technical analysis, fetches relevant news, and uses AI to generate actionable narratives for your personal watchlist.
 
@@ -71,12 +71,14 @@ python run.py
 If SMTP credentials are not set, the report will be saved locally as `latest_briefing.html` for preview.
 
 ### Run via GitHub Actions
-This project is configured to run automatically every weekday at **8:00 AM PST**.
+This project is configured to run automatically every day at **8:00 AM America/Los_Angeles time**.
 
 To enable this:
 1. Push this code to a minimal GitHub repository.
 2. Go to **Settings > Secrets and variables > Actions**.
 3. Add the environment variables from your `.env` file as **Repository Secrets**.
+
+The scheduled workflows use a DST-safe pattern: GitHub Actions cron stays in UTC, so each workflow is scheduled at both possible UTC hours and then self-selects the true local run inside the job. The stock crawler refreshes data around `7:50 AM` local time, and the briefing workflow runs at `8:00 AM` local time. That avoids the usual PST/PDT drift and keeps the email close to the intended send time.
 
 This repo also includes `.github/workflows/keepalive.yaml`, which makes a minimal monthly commit to `.github/keepalive.md` so scheduled workflows in public repositories are less likely to be auto-disabled for inactivity. The workflow needs `contents: write` permission to push the keepalive commit.
 
