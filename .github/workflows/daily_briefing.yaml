@@ -9,16 +9,24 @@ on:
     - cron: '0 16 * * *'
   workflow_dispatch: # Allow manual trigger
 
+concurrency:
+  group: morning-market-briefing-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   run-briefing:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
     - name: Check local schedule window
       id: schedule_gate
       run: |
+        LOCAL_TS=$(TZ=America/Los_Angeles date +'%Y-%m-%d %H:%M:%S %Z')
         LOCAL_HOUR=$(TZ=America/Los_Angeles date +%H)
+        echo "local_ts=$LOCAL_TS" >> "$GITHUB_OUTPUT"
         echo "local_hour=$LOCAL_HOUR" >> "$GITHUB_OUTPUT"
+        echo "Local time: $LOCAL_TS"
 
         if [ "$LOCAL_HOUR" = "08" ]; then
           echo "run=true" >> "$GITHUB_OUTPUT"
@@ -30,11 +38,11 @@ jobs:
 
     - name: Checkout code
       if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule_gate.outputs.run == 'true' }}
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       
     - name: Set up Python
       if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule_gate.outputs.run == 'true' }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
         
