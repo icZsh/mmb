@@ -29,6 +29,13 @@ def send_email(html_content, recipient=None):
     """
     Sends the email using SMTP configuration from .env
     """
+    if os.getenv("MMB_DISABLE_EMAIL", "").strip() == "1":
+        print("MMB_DISABLE_EMAIL=1 set. Skipping email send and writing local preview only.")
+        with open("latest_briefing.html", "w") as f:
+            f.write(html_content)
+        print("Saved to latest_briefing.html")
+        return True
+
     smtp_server = os.getenv("SMTP_SERVER") or "smtp.gmail.com"
     try:
         smtp_port = int(os.getenv("SMTP_PORT") or 587)

@@ -1,13 +1,35 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from src.email.sender import send_email
 from src.output.exporter import save_structured_brief
 
 
 class SaveStructuredBriefTests(unittest.TestCase):
+    def test_send_email_can_be_disabled_for_local_artifact_runs(self):
+        html = "<html><body>brief</body></html>"
+
+        with patch.dict(
+            os.environ,
+            {
+                "MMB_DISABLE_EMAIL": "1",
+                "SMTP_USER": "user@example.com",
+                "SMTP_PASSWORD": "secret",
+                "EMAIL_RECIPIENT": "isaac@example.com",
+            },
+            clear=False,
+        ), patch("builtins.open", wraps=open) as mocked_open:
+            with patch("src.email.sender.smtplib.SMTP") as mock_smtp:
+                result = send_email(html)
+
+        self.assertTrue(result)
+        mock_smtp.assert_not_called()
+        self.assertTrue(any(call.args[0] == "latest_briefing.html" for call in mocked_open.mock_calls if call.args))
+
     def test_writes_json_artifact_to_obsidian_briefing_directory(self):
         market = {
             "SPY": {"price": 523.1, "change_pct": 0.42, "name": "S&P 500"},
