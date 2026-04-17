@@ -79,6 +79,32 @@ class SaveStructuredBriefTests(unittest.TestCase):
             self.assertEqual(payload["market"]["SPY"]["name"], "S&P 500")
             self.assertEqual(payload["artifact_type"], "mmb-daily-brief")
 
+    def test_writes_markdown_index_note_linking_html_and_json_outputs(self):
+        market = {"SPY": {"price": 523.1, "change_pct": 0.42, "name": "S&P 500"}}
+        watchlist = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault = Path(tmpdir) / "Isaac's Vault"
+            html_dir = vault / "2026" / "04"
+            html_dir.mkdir(parents=True, exist_ok=True)
+            html_path = html_dir / "Morning Market Briefing – 2026-04-16.html"
+            html_path.write_text("<html></html>", encoding="utf-8")
+
+            class FixedDateTime:
+                @classmethod
+                def now(cls):
+                    import datetime
+                    return datetime.datetime(2026, 4, 16, 7, 0, 0)
+
+            with patch("src.output.exporter.datetime", FixedDateTime):
+                artifact_path = save_structured_brief(market, watchlist, vault_path=str(vault))
+
+            note_path = vault / "Hermes" / "Morning Briefing" / "2026" / "04" / "2026-04-16-mmb.md"
+            self.assertTrue(note_path.exists())
+            note_content = note_path.read_text(encoding="utf-8")
+            self.assertIn("[查看 HTML 晨报](../../../../2026/04/Morning Market Briefing – 2026-04-16.html)", note_content)
+            self.assertIn(f"[查看 JSON artifact]({artifact_path.name})", note_content)
+
 
 if __name__ == "__main__":
     unittest.main()
