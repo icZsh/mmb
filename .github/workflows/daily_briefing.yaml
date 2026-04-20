@@ -21,19 +21,32 @@ jobs:
     steps:
     - name: Check local schedule window
       id: schedule_gate
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        TRIGGER_SCHEDULE: ${{ github.event.schedule }}
       run: |
         LOCAL_TS=$(TZ=America/Los_Angeles date +'%Y-%m-%d %H:%M:%S %Z')
         LOCAL_HOUR=$(TZ=America/Los_Angeles date +%H)
+        LOCAL_TZ=$(TZ=America/Los_Angeles date +%Z)
         echo "local_ts=$LOCAL_TS" >> "$GITHUB_OUTPUT"
         echo "local_hour=$LOCAL_HOUR" >> "$GITHUB_OUTPUT"
+        echo "local_tz=$LOCAL_TZ" >> "$GITHUB_OUTPUT"
+        echo "trigger_schedule=$TRIGGER_SCHEDULE" >> "$GITHUB_OUTPUT"
         echo "Local time: $LOCAL_TS"
+        echo "Triggered by schedule: ${TRIGGER_SCHEDULE:-<manual>}"
 
-        if [ "$LOCAL_HOUR" = "08" ]; then
+        if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
           echo "run=true" >> "$GITHUB_OUTPUT"
-          echo "Proceeding: local time is within the 8 AM PT window."
+          echo "Proceeding: manual run bypasses the schedule gate."
+        elif [ "$LOCAL_TZ" = "PDT" ] && [ "$TRIGGER_SCHEDULE" = "0 15 * * *" ] && [ "$LOCAL_HOUR" -ge 8 ] && [ "$LOCAL_HOUR" -le 10 ]; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "Proceeding: PDT should execute the 15:00 UTC schedule, and this run is within the delay-tolerant window."
+        elif [ "$LOCAL_TZ" = "PST" ] && [ "$TRIGGER_SCHEDULE" = "0 16 * * *" ] && [ "$LOCAL_HOUR" -ge 8 ] && [ "$LOCAL_HOUR" -le 10 ]; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "Proceeding: PST should execute the 16:00 UTC schedule, and this run is within the delay-tolerant window."
         else
           echo "run=false" >> "$GITHUB_OUTPUT"
-          echo "Skipping scheduled run outside the 8 AM PT window."
+          echo "Skipping: this schedule/local-time combination is not the intended 8 AM PT run."
         fi
 
     - name: Checkout code
